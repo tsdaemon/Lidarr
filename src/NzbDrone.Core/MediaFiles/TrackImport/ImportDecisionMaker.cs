@@ -12,6 +12,7 @@ using NzbDrone.Core.MediaFiles.TrackImport.Identification;
 using NzbDrone.Core.Music;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles.TrackImport
@@ -148,6 +149,11 @@ namespace NzbDrone.Core.MediaFiles.TrackImport
             var localTracks = trackData.Item1;
             var decisions = trackData.Item2;
 
+            if (config.NewDownload)
+            {
+                localTracks = DropLossyDuplicates(localTracks, decisions);
+            }
+
             localTracks.ForEach(x => x.ExistingFile = !config.NewDownload);
 
             var releases = _identificationService.Identify(localTracks, idOverrides, config);
@@ -195,6 +201,48 @@ namespace NzbDrone.Core.MediaFiles.TrackImport
             }
 
             return decisions;
+        }
+
+        private static readonly HashSet<int> LosslessQualityIds = new HashSet<int>
+        {
+            Quality.FLAC.Id,
+            Quality.FLAC_24.Id,
+            Quality.ALAC.Id,
+            Quality.ALAC_24.Id,
+            Quality.APE.Id,
+            Quality.WAVPACK.Id,
+            Quality.WAV.Id
+        };
+
+        // theseus: releases that ship both lossless and lossy copies of the same
+        // tracks give identification two files per track and fail to import.
+        // For new downloads, keep only the lossless files of any folder that
+        // has both. Library rescans are left alone.
+        private List<LocalTrack> DropLossyDuplicates(List<LocalTrack> localTracks, List<ImportDecision<LocalTrack>> decisions)
+        {
+            var result = new List<LocalTrack>();
+
+            foreach (var folder in localTracks.GroupBy(x => System.IO.Path.GetDirectoryName(x.Path)))
+            {
+                var tracks = folder.ToList();
+                var lossless = tracks.Where(x => x.Quality?.Quality != null && LosslessQualityIds.Contains(x.Quality.Quality.Id)).ToList();
+
+                if (lossless.Count == 0 || lossless.Count == tracks.Count)
+                {
+                    result.AddRange(tracks);
+                    continue;
+                }
+
+                foreach (var track in tracks.Except(lossless))
+                {
+                    _logger.Debug("Skipping lossy file {0}, folder has a lossless version", track.Path);
+                    decisions.Add(new ImportDecision<LocalTrack>(track, new Rejection("Lossless version in the same release is imported instead")));
+                }
+
+                result.AddRange(lossless);
+            }
+
+            return result;
         }
 
         private void EnsureData(LocalAlbumRelease release)

@@ -9,7 +9,8 @@ namespace NzbDrone.Core.MediaFiles.TrackImport.Specifications
 {
     public class CloseAlbumMatchSpecification : IImportDecisionEngineSpecification<LocalAlbumRelease>
     {
-        private const double _albumThreshold = 0.20;
+        // theseus: accept album matches down to 70 % (upstream: 80 %)
+        private const double _albumThreshold = 0.30;
         private const double _trackThreshold = 0.40;
         private readonly Logger _logger;
 
